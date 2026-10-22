@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Motion Graphics Scene Runner</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 1920px;
+      height: 1080px;
+      overflow: hidden;
+      background: #08080c;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    #stage {
+      position: relative;
+      width: 1920px;
+      height: 1080px;
+    }
+    #webgl-canvas, #overlay-2d, #overlay-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 1920px;
+      height: 1080px;
+    }
+    #overlay-2d, #overlay-svg {
+      pointer-events: none;
+    }
+  </style>
+  <!-- Optional: Import Three.js via CDN or local vendor bundle -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.170.0/build/three.module.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="webgl-canvas" width="1920" height="1080"></canvas>
+    <canvas id="overlay-2d" width="1920" height="1080"></canvas>
+    <svg id="overlay-svg" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg"></svg>
+  </div>
+
+  <script type="module">
+    import * as THREE from "three";
+
+    let songMap = null;
+    let envelopes = null;
+    let renderer, scene, camera, dancerGroup;
+    let ctx2d;
+
+    window.initScene = async function() {
+      const [mapRes, envRes] = await Promise.all([
+        fetch("../song/song-map.json").then((r) => r.json()),
+        fetch("../song/envelopes.json").then((r) => r.json()),
+      ]);
+      songMap = mapRes;
+      envelopes = envRes;
+
+      const webglCanvas = document.getElementById("webgl-canvas");
+      renderer = new THREE.WebGLRenderer({ canvas: webglCanvas, antialias: true, alpha: false });
+      renderer.setSize(1920, 1080, false);
+      renderer.setPixelRatio(1);
+      renderer.shadowMap.enabled = true;
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x09090e);
+      scene.fog = new THREE.FogExp2(0x09090e, 0.035);
+
+      camera = new THREE.PerspectiveCamera(45, 1920 / 1080, 0.1, 200);
+      camera.position.set(0, 2.2, 7.5);
+
+      const keyLight = new THREE.SpotLight(0xffd27d, 80, 40, Math.PI / 4, 0.4, 1.5);
+      keyLight.position.set(4, 8, 6);
+      keyLight.castShadow = true;
+      scene.add(keyLight);
+
+      const rimLight = new THREE.PointLight(0x40e0ff, 35, 25);
+      rimLight.position.set(-5, 4, -4);
+      scene.add(rimLight);
+
+      dancerGroup = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ color: 0xe8c47c, metalness: 0.8, roughness: 0.2 });
+      const torso = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.4, 0.45), mat);
+      torso.position.y = 2.0;
+      torso.castShadow = true;
+      dancerGroup.add(torso);
+      scene.add(dancerGroup);
+
+      ctx2d = document.getElementById("overlay-2d").getContext("2d");
+    };
+
+    /**
+     * Deterministic frame renderer called by render_web_video.mjs
+     * @param {number} frameIndex - 0-based frame number
+     * @param {number} timeSec - Exact timestamp in seconds (frameIndex / 30)
+     */
+    window.seekToFrame = async function(frameIndex, timeSec) {
+      if (!envelopes || !songMap) return;
+      const env = envelopes.frames[Math.min(frameIndex, envelopes.frames.length - 1)] || {
+        rms: 0, bass: 0, drums: 0, voice: 0, other: 0
+      };
+
+      // 1. Update 3D Choreography deterministically from timeSec + audio envelopes
+      const beatPhase = (timeSec * (songMap.bpm / 60)) * Math.PI * 2;
+      dancerGroup.position.y = Math.abs(Math.sin(beatPhase * 0.5)) * (0.25 + env.bass * 0.4);
+      dancerGroup.rotation.y = Math.sin(beatPhase * 0.25) * 0.6;
+
+      camera.position.x = Math.sin(timeSec * 0.4) * 1.8;
+      camera.lookAt(0, 1.8, 0);
+
+      renderer.render(scene, camera);
+
+      // 2. Update 2D Kinetic Typography / HUD Overlay
+      ctx2d.clearRect(0, 0, 1920, 1080);
+      ctx2d.save();
+      ctx2d.fillStyle = `rgba(255, 215, 130, ${0.15 + env.drums * 0.5})`;
+      ctx2d.font = "900 96px system-ui, sans-serif";
+      ctx2d.textAlign = "center";
+      ctx2d.fillText(`BAR ${Math.floor(timeSec * (songMap.bpm / 60) / 4) + 1}`, 960, 160);
+      ctx2d.restore();
+    };
+  </script>
+</body>
+</html>
